@@ -17,7 +17,7 @@ var (
 	_ easyjson.Marshaler
 )
 
-func easyjsonD2b7633eDecodeHlc21Goldrush(in *jlexer.Lexer, out *License) {
+func easyjsonD2b7633eDecodeHlc21Client(in *jlexer.Lexer, out *License) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -52,7 +52,7 @@ func easyjsonD2b7633eDecodeHlc21Goldrush(in *jlexer.Lexer, out *License) {
 		in.Consumed()
 	}
 }
-func easyjsonD2b7633eEncodeHlc21Goldrush(out *jwriter.Writer, in License) {
+func easyjsonD2b7633eEncodeHlc21Client(out *jwriter.Writer, in License) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -77,27 +77,27 @@ func easyjsonD2b7633eEncodeHlc21Goldrush(out *jwriter.Writer, in License) {
 // MarshalJSON supports json.Marshaler interface
 func (v License) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjsonD2b7633eEncodeHlc21Goldrush(&w, v)
+	easyjsonD2b7633eEncodeHlc21Client(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v License) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjsonD2b7633eEncodeHlc21Goldrush(w, v)
+	easyjsonD2b7633eEncodeHlc21Client(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *License) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjsonD2b7633eDecodeHlc21Goldrush(&r, v)
+	easyjsonD2b7633eDecodeHlc21Client(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *License) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjsonD2b7633eDecodeHlc21Goldrush(l, v)
+	easyjsonD2b7633eDecodeHlc21Client(l, v)
 }
-func easyjsonD2b7633eDecodeHlc21Goldrush1(in *jlexer.Lexer, out *ExploreAreaOut) {
+func easyjsonD2b7633eDecodeHlc21Client1(in *jlexer.Lexer, out *ExploreAreaOut) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -130,7 +130,7 @@ func easyjsonD2b7633eDecodeHlc21Goldrush1(in *jlexer.Lexer, out *ExploreAreaOut)
 		in.Consumed()
 	}
 }
-func easyjsonD2b7633eEncodeHlc21Goldrush1(out *jwriter.Writer, in ExploreAreaOut) {
+func easyjsonD2b7633eEncodeHlc21Client1(out *jwriter.Writer, in ExploreAreaOut) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -150,27 +150,27 @@ func easyjsonD2b7633eEncodeHlc21Goldrush1(out *jwriter.Writer, in ExploreAreaOut
 // MarshalJSON supports json.Marshaler interface
 func (v ExploreAreaOut) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjsonD2b7633eEncodeHlc21Goldrush1(&w, v)
+	easyjsonD2b7633eEncodeHlc21Client1(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v ExploreAreaOut) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjsonD2b7633eEncodeHlc21Goldrush1(w, v)
+	easyjsonD2b7633eEncodeHlc21Client1(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *ExploreAreaOut) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjsonD2b7633eDecodeHlc21Goldrush1(&r, v)
+	easyjsonD2b7633eDecodeHlc21Client1(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *ExploreAreaOut) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjsonD2b7633eDecodeHlc21Goldrush1(l, v)
+	easyjsonD2b7633eDecodeHlc21Client1(l, v)
 }
-func easyjsonD2b7633eDecodeHlc21Goldrush2(in *jlexer.Lexer, out *ExploreAreaIn) {
+func easyjsonD2b7633eDecodeHlc21Client2(in *jlexer.Lexer, out *ExploreAreaIn) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -207,7 +207,7 @@ func easyjsonD2b7633eDecodeHlc21Goldrush2(in *jlexer.Lexer, out *ExploreAreaIn) 
 		in.Consumed()
 	}
 }
-func easyjsonD2b7633eEncodeHlc21Goldrush2(out *jwriter.Writer, in ExploreAreaIn) {
+func easyjsonD2b7633eEncodeHlc21Client2(out *jwriter.Writer, in ExploreAreaIn) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -237,27 +237,27 @@ func easyjsonD2b7633eEncodeHlc21Goldrush2(out *jwriter.Writer, in ExploreAreaIn)
 // MarshalJSON supports json.Marshaler interface
 func (v ExploreAreaIn) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjsonD2b7633eEncodeHlc21Goldrush2(&w, v)
+	easyjsonD2b7633eEncodeHlc21Client2(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v ExploreAreaIn) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjsonD2b7633eEncodeHlc21Goldrush2(w, v)
+	easyjsonD2b7633eEncodeHlc21Client2(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *ExploreAreaIn) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjsonD2b7633eDecodeHlc21Goldrush2(&r, v)
+	easyjsonD2b7633eDecodeHlc21Client2(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *ExploreAreaIn) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjsonD2b7633eDecodeHlc21Goldrush2(l, v)
+	easyjsonD2b7633eDecodeHlc21Client2(l, v)
 }
-func easyjsonD2b7633eDecodeHlc21Goldrush3(in *jlexer.Lexer, out *DigIn) {
+func easyjsonD2b7633eDecodeHlc21Client3(in *jlexer.Lexer, out *DigIn) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
@@ -294,7 +294,7 @@ func easyjsonD2b7633eDecodeHlc21Goldrush3(in *jlexer.Lexer, out *DigIn) {
 		in.Consumed()
 	}
 }
-func easyjsonD2b7633eEncodeHlc21Goldrush3(out *jwriter.Writer, in DigIn) {
+func easyjsonD2b7633eEncodeHlc21Client3(out *jwriter.Writer, in DigIn) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -324,23 +324,23 @@ func easyjsonD2b7633eEncodeHlc21Goldrush3(out *jwriter.Writer, in DigIn) {
 // MarshalJSON supports json.Marshaler interface
 func (v DigIn) MarshalJSON() ([]byte, error) {
 	w := jwriter.Writer{}
-	easyjsonD2b7633eEncodeHlc21Goldrush3(&w, v)
+	easyjsonD2b7633eEncodeHlc21Client3(&w, v)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
 func (v DigIn) MarshalEasyJSON(w *jwriter.Writer) {
-	easyjsonD2b7633eEncodeHlc21Goldrush3(w, v)
+	easyjsonD2b7633eEncodeHlc21Client3(w, v)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *DigIn) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjsonD2b7633eDecodeHlc21Goldrush3(&r, v)
+	easyjsonD2b7633eDecodeHlc21Client3(&r, v)
 	return r.Error()
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *DigIn) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjsonD2b7633eDecodeHlc21Goldrush3(l, v)
+	easyjsonD2b7633eDecodeHlc21Client3(l, v)
 }

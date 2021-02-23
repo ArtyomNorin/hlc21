@@ -1,11 +1,15 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/valyala/fasthttp"
+	"golang.org/x/time/rate"
 	"log"
+	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -22,6 +26,17 @@ type BadRequestError struct {
 
 type Client struct {
 	httpClient *fasthttp.HostClient
+	limiter    *rate.Limiter
+
+	countReq       uint64
+	cash500Cnt     uint64
+	cash400Cnt     uint64
+	licenses500Cnt uint64
+	licenses400Cnt uint64
+	dig500Cnt      uint64
+	dig400Cnt      uint64
+	explore500Cnt  uint64
+	explore400Cnt  uint64
 }
 
 func NewClient(address, port string) *Client {
@@ -30,7 +45,18 @@ func NewClient(address, port string) *Client {
 		Addr: address + ":" + port,
 	}
 
+	client.limiter = rate.NewLimiter(rate.Every(time.Millisecond/15), 2)
+
 	return client
+}
+
+func (c *Client) doRequest(req *fasthttp.Request, res *fasthttp.Response) error {
+	if err := c.limiter.Wait(context.Background()); err != nil {
+		log.Fatalf("WAIT ERR: %s\n", err)
+	}
+
+	atomic.AddUint64(&c.countReq, 1)
+	return c.httpClient.Do(req, res)
 }
 
 func (c *Client) HealthCheck() (bool, error) {
@@ -60,7 +86,7 @@ func (c *Client) HealthCheck() (bool, error) {
 	return false, nil
 }
 
-func (c *Client) PostLicenses() (License, error) {
+func (c *Client) PostLicenses(coin Coin) (License, error) {
 	request, response := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 	defer func() {
 		fasthttp.ReleaseRequest(request)
@@ -71,14 +97,18 @@ func (c *Client) PostLicenses() (License, error) {
 	request.Header.SetMethod("POST")
 	request.Header.SetContentType("application/json")
 	request.Header.SetHost("localhost")
-	request.AppendBodyString("[]")
+	request.AppendBodyString("[")
+	if coin != 0 {
+		request.AppendBodyString(strconv.Itoa(int(coin)))
+	}
+	request.AppendBodyString("]")
 
 	license := License{}
 	var licenseErr error
 
 Loop:
 	for {
-		if err := c.httpClient.Do(request, response); err != nil {
+		if err := c.doRequest(request, response); err != nil {
 			licenseErr = errors.New("post /licenses error: " + err.Error())
 			break Loop
 		}
@@ -90,10 +120,12 @@ Loop:
 			}
 
 			break Loop
-		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway,
-			fasthttp.StatusGatewayTimeout, fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
-			log.Println("license sleep")
-			time.Sleep(time.Microsecond * 200)
+		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
+			atomic.AddUint64(&c.licenses500Cnt, 1)
+			log.Println(fmt.Sprintf("post /licenses 5** error: %d: %s", response.StatusCode(), string(response.Body())))
+		case fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
+			atomic.AddUint64(&c.licenses400Cnt, 1)
+			log.Println(fmt.Sprintf("post /licenses 4** error: %d: %s", response.StatusCode(), string(response.Body())))
 		default:
 			errStr := fmt.Sprintf("post /licenses unexpected error: %d: %s", response.StatusCode(), string(response.Body()))
 			licenseErr = errors.New(errStr)
@@ -125,34 +157,46 @@ func (c *Client) PostExplore(posX, posY, sizeX, sizeY int) (ExploreAreaOut, erro
 	request.Header.SetHost("localhost")
 	request.AppendBody(data)
 
-	if err := c.httpClient.Do(request, response); err != nil {
-		return ExploreAreaOut{}, errors.New("post /explore error: " + err.Error())
-	}
+	exploreAreaOut := ExploreAreaOut{}
+	var exploreErr error
 
-	switch response.StatusCode() {
-	case fasthttp.StatusOK:
-		exploreAreaOut := ExploreAreaOut{}
-		if err := json.Unmarshal(response.Body(), &exploreAreaOut); err != nil {
-			return ExploreAreaOut{}, errors.New("marshal exploreAreaOut error: " + err.Error())
+Loop:
+	for {
+		if err := c.doRequest(request, response); err != nil {
+			exploreErr = errors.New("post /explore error: " + err.Error())
+			break Loop
 		}
 
-		return exploreAreaOut, nil
-	case fasthttp.StatusTooManyRequests:
-		return ExploreAreaOut{}, TooManyRequestsErr
-	case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
-		return ExploreAreaOut{}, InternalServerErr
-	default:
-		errStr := fmt.Sprintf("post /explore unexpected error: %d: %s", response.StatusCode(), string(response.Body()))
-		return ExploreAreaOut{}, errors.New(errStr)
+		switch response.StatusCode() {
+		case fasthttp.StatusOK:
+			if err := json.Unmarshal(response.Body(), &exploreAreaOut); err != nil {
+				exploreErr = errors.New("marshal exploreAreaOut error: " + err.Error())
+			}
+
+			break Loop
+		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
+			atomic.AddUint64(&c.explore500Cnt, 1)
+			log.Println(fmt.Sprintf("post /explore 5** error: %d: %s", response.StatusCode(), string(response.Body())))
+		case fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
+			atomic.AddUint64(&c.explore400Cnt, 1)
+			log.Println(fmt.Sprintf("post /explore 4** error: %d: %s", response.StatusCode(), string(response.Body())))
+		default:
+			errStr := fmt.Sprintf("post /explore unexpected error: %d: %s", response.StatusCode(), string(response.Body()))
+			exploreErr = errors.New(errStr)
+
+			break Loop
+		}
 	}
+
+	return exploreAreaOut, exploreErr
 }
 
-func (c *Client) PostDig(licenseID, posX, posY, depth int) (Treasures, error) {
+func (c *Client) PostDig(licenseID, posX, posY, depth int) ([]Treasure, error) {
 	digIn := DigIn{LicenseID: licenseID, PosX: posX, PosY: posY, Depth: depth}
 
 	data, err := json.Marshal(digIn)
 	if err != nil {
-		return Treasures{}, errors.New("marshal DigIn error: " + err.Error())
+		return nil, errors.New("marshal DigIn error: " + err.Error())
 	}
 
 	request, response := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
@@ -167,31 +211,44 @@ func (c *Client) PostDig(licenseID, posX, posY, depth int) (Treasures, error) {
 	request.Header.SetHost("localhost")
 	request.AppendBody(data)
 
-	if err := c.httpClient.Do(request, response); err != nil {
-		return Treasures{}, errors.New("post /dig error: " + err.Error())
-	}
+	treasures := make([]Treasure, 0)
+	var digErr error
 
-	switch response.StatusCode() {
-	case fasthttp.StatusOK:
-		treasures := Treasures{}
-		if err := json.Unmarshal(response.Body(), &treasures); err != nil {
-			return Treasures{}, errors.New("marshal Treasures error: " + err.Error())
+Loop:
+	for {
+		if err := c.doRequest(request, response); err != nil {
+			digErr = errors.New("post /dig error: " + err.Error())
+			break Loop
 		}
 
-		return treasures, nil
-	case fasthttp.StatusNotFound:
-		return Treasures{}, NoTreasureErr
-	case fasthttp.StatusTooManyRequests:
-		return Treasures{}, TooManyRequestsErr
-	case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
-		return Treasures{}, InternalServerErr
-	default:
-		errStr := fmt.Sprintf("post /dig unexpected error: %d: %s", response.StatusCode(), string(response.Body()))
-		return Treasures{}, errors.New(errStr)
+		switch response.StatusCode() {
+		case fasthttp.StatusOK:
+			if err := json.Unmarshal(response.Body(), &treasures); err != nil {
+				digErr = errors.New("marshal Treasures error: " + err.Error())
+			}
+
+			break Loop
+		case fasthttp.StatusNotFound:
+			digErr = NoTreasureErr
+			break Loop
+		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
+			atomic.AddUint64(&c.dig500Cnt, 1)
+			log.Println(fmt.Sprintf("post /dig 5** error: %d: %s", response.StatusCode(), string(response.Body())))
+		case fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
+			atomic.AddUint64(&c.dig400Cnt, 1)
+			log.Println(fmt.Sprintf("post /dig 4** error: %d: %s", response.StatusCode(), string(response.Body())))
+		default:
+			errStr := fmt.Sprintf("post /dig unexpected error: %d: %s", response.StatusCode(), string(response.Body()))
+			digErr = errors.New(errStr)
+
+			break Loop
+		}
 	}
+
+	return treasures, digErr
 }
 
-func (c *Client) PostCash(treasure string) error {
+func (c *Client) PostCash(treasure Treasure) ([]Coin, error) {
 	request, response := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 	defer func() {
 		fasthttp.ReleaseRequest(request)
@@ -202,24 +259,31 @@ func (c *Client) PostCash(treasure string) error {
 	request.Header.SetMethod("POST")
 	request.Header.SetContentType("application/json")
 	request.Header.SetHost("localhost")
-	request.AppendBodyString("\"" + treasure + "\"")
+	request.AppendBodyString("\"" + string(treasure) + "\"")
 
+	coins := make([]Coin, 0)
 	var cashErr error
 
 Loop:
 	for {
-		if err := c.httpClient.Do(request, response); err != nil {
+		if err := c.doRequest(request, response); err != nil {
 			cashErr = errors.New("post /cash error: " + err.Error())
 			break Loop
 		}
 
 		switch response.StatusCode() {
 		case fasthttp.StatusOK:
+			if err := json.Unmarshal(response.Body(), &coins); err != nil {
+				cashErr = errors.New("marshal Coins error: " + err.Error())
+			}
+
 			break Loop
-		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway,
-			fasthttp.StatusGatewayTimeout, fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
-			log.Println("cash sleep")
-			time.Sleep(time.Microsecond * 200)
+		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
+			atomic.AddUint64(&c.cash500Cnt, 1)
+			log.Println(fmt.Sprintf("post /cash 5** error: %d: %s", response.StatusCode(), string(response.Body())))
+		case fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
+			atomic.AddUint64(&c.cash400Cnt, 1)
+			log.Println(fmt.Sprintf("post /cash 4** error: %d: %s", response.StatusCode(), string(response.Body())))
 		default:
 			errStr := fmt.Sprintf("post /cash unexpected error: %d: %s", response.StatusCode(), string(response.Body()))
 			cashErr = errors.New(errStr)
@@ -228,5 +292,5 @@ Loop:
 		}
 	}
 
-	return cashErr
+	return coins, cashErr
 }

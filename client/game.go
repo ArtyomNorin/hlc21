@@ -33,7 +33,7 @@ func NewGame(client *Client) *Game {
 		areasChan: make(chan []ExploreAreaOut),
 
 		countActiveLicenses: 10,
-		countProcessAreas:   300,
+		countProcessAreas:   530,
 	}
 }
 
@@ -80,9 +80,11 @@ func (g *Game) dig(areas []ExploreAreaOut, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	license := License{}
+	coinsBank := make([]Coin, 0, 5000)
+	var coin Coin
 
 	for _, area := range areas {
-		areaTreasuresCnt := 0 // кол-во выкопанных сокровищ
+		areaTreasuresCnt := 0 // кол-во выкопанных сокровищ для области
 
 		x := area.Area.PosX
 		y := area.Area.PosY
@@ -90,19 +92,12 @@ func (g *Game) dig(areas []ExploreAreaOut, wg *sync.WaitGroup) {
 	Loop:
 		for y < area.Area.PosY+area.Area.SizeY {
 			for x < area.Area.PosX+area.Area.SizeX {
-				if area.Amount != 0 && areaTreasuresCnt == area.Amount {
+				if areaTreasuresCnt == area.Amount {
 					break Loop
 				}
 
-				columnTreasuresCnt := 0
 				columnArea, err := g.client.PostExplore(x, y, 1, 1)
 				if err != nil {
-					if errors.Is(err, TooManyRequestsErr) || errors.Is(err, InternalServerErr) {
-						log.Println(err)
-						time.Sleep(time.Millisecond * 200)
-						continue
-					}
-
 					log.Fatalln(err)
 				}
 
@@ -112,9 +107,17 @@ func (g *Game) dig(areas []ExploreAreaOut, wg *sync.WaitGroup) {
 				}
 
 				columnDepth := 1
+				columnTreasuresCnt := 0
+
 				for columnTreasuresCnt < columnArea.Amount {
 					if license.IsEnd() {
-						license, err = g.client.PostLicenses()
+						if len(coinsBank) != 0 {
+							coin, coinsBank = coinsBank[len(coinsBank)-1], coinsBank[:len(coinsBank)-1]
+							license, err = g.client.PostLicenses(coin)
+						} else {
+							license, err = g.client.PostLicenses(0)
+						}
+
 						if err != nil {
 							log.Fatalln(err)
 						}
@@ -122,12 +125,6 @@ func (g *Game) dig(areas []ExploreAreaOut, wg *sync.WaitGroup) {
 
 					treasures, err := g.client.PostDig(license.ID, x, y, columnDepth)
 					if err != nil {
-						if errors.Is(err, TooManyRequestsErr) || errors.Is(err, InternalServerErr) {
-							log.Println(err)
-							time.Sleep(time.Millisecond * 200)
-							continue
-						}
-
 						if errors.Is(err, NoTreasureErr) {
 							columnDepth++
 							license.DigUsed++
@@ -137,25 +134,23 @@ func (g *Game) dig(areas []ExploreAreaOut, wg *sync.WaitGroup) {
 						log.Fatalln(err)
 					}
 
-					if len(treasures) == 0 {
-						columnDepth++
-						license.DigUsed++
-						continue
-					}
-
 					for _, treasure := range treasures {
-						if err := g.client.PostCash(treasure); err != nil {
+						coins, err := g.client.PostCash(treasure)
+						if err != nil {
 							log.Fatalln(err)
 						}
 
-						columnTreasuresCnt++
-						areaTreasuresCnt++
+						if len(coins) != 0 && len(coinsBank) != cap(coinsBank) {
+							coinsBank = append(coinsBank, coins...)
+						}
 					}
 
+					columnTreasuresCnt += len(treasures)
 					columnDepth++
 					license.DigUsed++
 				}
 
+				areaTreasuresCnt += columnTreasuresCnt
 				x++
 			}
 
@@ -180,12 +175,6 @@ func (g *Game) explore(yStart, yEnd int, wg *sync.WaitGroup) {
 		for x+g.areaSize <= 3500 {
 			exploreAreaOut, err := g.client.PostExplore(x, y, g.areaSize, g.areaSize)
 			if err != nil {
-				if errors.Is(err, TooManyRequestsErr) || errors.Is(err, InternalServerErr) {
-					log.Println(err)
-					time.Sleep(time.Millisecond * 200)
-					continue
-				}
-
 				log.Fatalln(err)
 			}
 
@@ -205,22 +194,37 @@ func (g *Game) Run() error {
 		return err
 	}
 
-	timeStart := time.Now()
+	log.Printf("EXPLORE START: %s\n", time.Now().Format("15:04:05.000000"))
 	g.explorePhase()
-	totalTime := time.Since(timeStart)
+	log.Printf("EXPLORE END: %s\n", time.Now().Format("15:04:05.000000"))
+	exploreCountReq := g.client.countReq
+	log.Printf("EXPLORE COUNT REQ: %d\n\n", exploreCountReq)
 
-	log.Printf("EXPLORE TIME: %s\n", totalTime.String())
-	log.Printf("AREAS LEN: %d\n", len(g.areas))
+	log.Printf("AREAS LEN: %d\n\n", len(g.areas))
 
-	sort.SliceStable(g.areas, func(i, j int) bool {
-		return g.areas[i].Amount > g.areas[j].Amount
-	})
+	log.Printf("SORT START: %s\n", time.Now().Format("15:04:05.000000"))
+	sort.SliceStable(g.areas, func(i, j int) bool { return g.areas[i].Amount > g.areas[j].Amount })
+	log.Printf("SORT END: %s\n\n", time.Now().Format("15:04:05.000000"))
 
-	timeStart = time.Now()
+	log.Printf("DIG START: %s\n", time.Now().Format("15:04:05.000000"))
 	g.digPhase()
-	totalTime = time.Since(timeStart)
+	log.Printf("DIG END: %s\n", time.Now().Format("15:04:05.000000"))
+	log.Printf("DIG COUNT REQ: %d\n\n", g.client.countReq-exploreCountReq)
 
-	log.Printf("DIG TIME: %s\n", totalTime.String())
+	//stats
+	log.Printf("COUNT REQ: %d\n", g.client.countReq)
+
+	log.Printf("LICENSE 500: %d\n", g.client.licenses500Cnt)
+	log.Printf("LICENSE 400: %d\n", g.client.licenses400Cnt)
+
+	log.Printf("EXPLORE 500: %d\n", g.client.explore500Cnt)
+	log.Printf("EXPLORE 400: %d\n", g.client.explore400Cnt)
+
+	log.Printf("DIG 500: %d\n", g.client.dig500Cnt)
+	log.Printf("DIG 400: %d\n", g.client.dig400Cnt)
+
+	log.Printf("CASH 500: %d\n", g.client.cash500Cnt)
+	log.Printf("CASH 400: %d\n", g.client.cash400Cnt)
 
 	return nil
 }
@@ -237,7 +241,7 @@ func (g *Game) waitBackend() error {
 			return nil
 		}
 
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 50)
 		log.Println("wait backend")
 	}
 }

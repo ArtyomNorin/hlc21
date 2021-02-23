@@ -22,7 +22,11 @@ func (l License) IsEnd() bool {
 	return l.DigUsed >= l.DigAllowed
 }
 
-type Treasures []string
+func (l License) IsFree() bool {
+	return l.DigAllowed == 3
+}
+
+type Treasure string
 
 type DigIn struct {
 	LicenseID int `json:"licenseID"`
@@ -30,3 +34,5 @@ type DigIn struct {
 	PosY      int `json:"posY"`
 	Depth     int `json:"depth"`
 }
+
+type Coin int
