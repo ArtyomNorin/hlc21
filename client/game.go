@@ -33,7 +33,7 @@ func NewGame(client *Client) *Game {
 		areasChan: make(chan []ExploreAreaOut),
 
 		countActiveLicenses: 10,
-		countProcessAreas:   530,
+		countProcessAreas:   585, //570, 600
 	}
 }
 
@@ -178,7 +178,7 @@ func (g *Game) explore(yStart, yEnd int, wg *sync.WaitGroup) {
 				log.Fatalln(err)
 			}
 
-			x += g.areaSize
+			x += g.areaSize * 2
 			areas = append(areas, exploreAreaOut)
 		}
 
@@ -197,19 +197,15 @@ func (g *Game) Run() error {
 	log.Printf("EXPLORE START: %s\n", time.Now().Format("15:04:05.000000"))
 	g.explorePhase()
 	log.Printf("EXPLORE END: %s\n", time.Now().Format("15:04:05.000000"))
-	exploreCountReq := g.client.countReq
-	log.Printf("EXPLORE COUNT REQ: %d\n\n", exploreCountReq)
 
 	log.Printf("AREAS LEN: %d\n\n", len(g.areas))
 
 	log.Printf("SORT START: %s\n", time.Now().Format("15:04:05.000000"))
 	sort.SliceStable(g.areas, func(i, j int) bool { return g.areas[i].Amount > g.areas[j].Amount })
-	log.Printf("SORT END: %s\n\n", time.Now().Format("15:04:05.000000"))
 
 	log.Printf("DIG START: %s\n", time.Now().Format("15:04:05.000000"))
 	g.digPhase()
 	log.Printf("DIG END: %s\n", time.Now().Format("15:04:05.000000"))
-	log.Printf("DIG COUNT REQ: %d\n\n", g.client.countReq-exploreCountReq)
 
 	//stats
 	log.Printf("COUNT REQ: %d\n", g.client.countReq)

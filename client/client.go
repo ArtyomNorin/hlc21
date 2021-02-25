@@ -45,7 +45,7 @@ func NewClient(address, port string) *Client {
 		Addr: address + ":" + port,
 	}
 
-	client.limiter = rate.NewLimiter(rate.Every(time.Millisecond/15), 2)
+	client.limiter = rate.NewLimiter(rate.Every(time.Millisecond), 1)
 
 	return client
 }
@@ -280,7 +280,8 @@ Loop:
 			break Loop
 		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
 			atomic.AddUint64(&c.cash500Cnt, 1)
-			log.Println(fmt.Sprintf("post /cash 5** error: %d: %s", response.StatusCode(), string(response.Body())))
+			return nil, nil
+			//log.Println(fmt.Sprintf("post /cash 5** error: %d: %s", response.StatusCode(), string(response.Body())))
 		case fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
 			atomic.AddUint64(&c.cash400Cnt, 1)
 			log.Println(fmt.Sprintf("post /cash 4** error: %d: %s", response.StatusCode(), string(response.Body())))
