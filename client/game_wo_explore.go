@@ -36,7 +36,7 @@ func (g *GameWOExplore) Run() error {
 	threadChunkSize := 3500 / g.countThreads
 
 	for y := 0; y <= 3500-threadChunkSize; y += threadChunkSize {
-		go g.exploreAndDig(y, y+threadChunkSize, 5, 4, wg)
+		go g.exploreAndDig(y, y+threadChunkSize, 5, 2, wg)
 	}
 
 	wg.Wait()
