@@ -36,7 +36,7 @@ func (g *GameWOExplore) Run() error {
 	threadChunkSize := 3500 / g.countThreads
 
 	for y := 0; y <= 3500-threadChunkSize; y += threadChunkSize {
-		go g.exploreAndDig(y, y+threadChunkSize, 5, 2, wg)
+		go g.exploreAndDig(y, y+threadChunkSize, 3, 1, wg)
 	}
 
 	wg.Wait()
@@ -52,7 +52,7 @@ func (g *GameWOExplore) exploreAndDig(yStart, yEnd, chunkSize, treasuresMin int,
 	var coin Coin
 
 	for y := yStart; y <= yEnd-chunkSize; y += chunkSize {
-		for x := 0; x <= 3500-chunkSize; x += chunkSize {
+		for x := 875; x <= 2625-chunkSize; x += chunkSize {
 			chunkArea, err := g.client.PostExplore(x, y, chunkSize, chunkSize)
 			if err != nil {
 				log.Fatal(err)
