@@ -2,15 +2,29 @@ package client
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const coinsMax = 2000
 
+type GameStats struct {
+	FreeLicenses                    uint64
+	PaidLicenses                    uint64
+	SingleCellExplores              uint64
+	SingleCellExploresWithTreasures uint64
+	DigsDone                        uint64
+	TreasuresFound                  uint64
+	TreasuresExchanged              uint64
+	TreasuresNotExchanged           uint64
+}
+
 // GamePool с пулами потоков
 type GamePool struct {
+	gameStats      GameStats
 	client         *Client
 	areasQueue     chan ExploreAreaOut
 	coinsQueue     chan Coin
@@ -19,6 +33,7 @@ type GamePool struct {
 
 func NewGamePool(client *Client) *GamePool {
 	return &GamePool{
+		gameStats:      GameStats{},
 		client:         client,
 		areasQueue:     make(chan ExploreAreaOut, 200),
 		coinsQueue:     make(chan Coin, coinsMax),
@@ -28,8 +43,6 @@ func NewGamePool(client *Client) *GamePool {
 
 func (g *GamePool) explore(yStart, yEnd int) error {
 	for y := yStart; y < yEnd; y++ {
-		//count := 0
-
 		for x := 0; x < 3498; x += 3 {
 			area, err := g.client.PostExplore(x, y, 3, 1)
 			if err != nil {
@@ -38,22 +51,7 @@ func (g *GamePool) explore(yStart, yEnd int) error {
 
 			if area.Amount >= 1 {
 				g.areasQueue <- area
-				//count++
 			}
-
-			/*if count == 100 {
-				log.Printf("X: %d, Y: %d", x, y)
-				break
-			}*/
-
-			/*if area.Amount == 2 {
-				count++
-			}
-
-			if count == 10 {
-				log.Printf("X: %d, Y: %d", x, y)
-				break
-			}*/
 		}
 	}
 
@@ -68,7 +66,13 @@ func (g *GamePool) cash() error {
 				return err
 			}
 
-			if len(g.coinsQueue) != coinsMax {
+			if coins == nil {
+				atomic.AddUint64(&g.gameStats.TreasuresNotExchanged, 1)
+			} else {
+				atomic.AddUint64(&g.gameStats.TreasuresExchanged, 1)
+			}
+
+			if coins != nil && len(g.coinsQueue) != coinsMax {
 				for _, coin := range coins {
 					g.coinsQueue <- coin
 				}
@@ -95,9 +99,13 @@ func (g *GamePool) dig() error {
 				return err
 			}
 
-			if area.Amount == 0 {
+			atomic.AddUint64(&g.gameStats.SingleCellExplores, 1)
+
+			if column.Amount == 0 {
 				continue
 			}
+
+			atomic.AddUint64(&g.gameStats.SingleCellExploresWithTreasures, 1)
 
 			columnDepth := 1
 			columnTreasures := 0
@@ -105,8 +113,10 @@ func (g *GamePool) dig() error {
 				if license.IsEnd() {
 					if len(g.coinsQueue) != 0 {
 						license, err = g.client.PostLicenses(<-g.coinsQueue)
+						atomic.AddUint64(&g.gameStats.PaidLicenses, 1)
 					} else {
 						license, err = g.client.PostLicenses(0)
+						atomic.AddUint64(&g.gameStats.FreeLicenses, 1)
 					}
 
 					if err != nil {
@@ -119,11 +129,14 @@ func (g *GamePool) dig() error {
 					if errors.Is(err, NoTreasureErr) {
 						columnDepth++
 						license.DigUsed++
+						atomic.AddUint64(&g.gameStats.DigsDone, 1)
 						continue
 					}
 
 					return err
 				}
+
+				atomic.AddUint64(&g.gameStats.DigsDone, 1)
 
 				g.treasuresQueue <- treasures
 
@@ -134,6 +147,8 @@ func (g *GamePool) dig() error {
 
 			extractedAreaTreasures += columnTreasures
 		}
+
+		atomic.AddUint64(&g.gameStats.TreasuresFound, uint64(extractedAreaTreasures))
 	}
 
 	return nil
@@ -144,25 +159,10 @@ func (g *GamePool) Run() error {
 		return err
 	}
 
-	/*areas := make([]int, 140)
-
-	log.Printf("EXPLORE START: %s\n", time.Now().Format("15:04:05.000000"))
-	for x := 0; x < 3500; x++ {
-		area, _ := g.client.PostExplore(x, 0, 3, 1)
-		areas = append(areas, area.Amount)
-	}
-	log.Printf("EXPLORE END: %s\n", time.Now().Format("15:04:05.000000"))
-	log.Printf("LEN AREAS: %d\n", len(areas))
-
-	sort.SliceStable(areas, func(i, j int) bool {
-		return areas[i] >= areas[j]
-	})
-
-	log.Printf("AREAS: %+v\n", areas)*/
-
 	go func() {
 		time.Sleep(time.Second * 598)
-		g.printStats()
+		g.printGameStats()
+		g.printHttpStats()
 	}()
 
 	go func() {
@@ -217,20 +217,38 @@ func (g *GamePool) printQueueStats() {
 	log.Printf("COINS QUEUE: %d\n", len(g.coinsQueue))
 }
 
-func (g *GamePool) printStats() {
-	log.Printf("COUNT REQ: %d\n", g.client.countReq)
+func (g *GamePool) printGameStats() {
+	fmt.Println("*** GAME STATS ***")
 
-	log.Printf("LICENSE 500: %d\n", g.client.licenses500Cnt)
-	log.Printf("LICENSE 400: %d\n", g.client.licenses400Cnt)
+	fmt.Printf("Free licenses: %d\n", g.gameStats.FreeLicenses)
+	fmt.Printf("Paid licenses: %d\n", g.gameStats.PaidLicenses)
 
-	log.Printf("EXPLORE 500: %d\n", g.client.explore500Cnt)
-	log.Printf("EXPLORE 400: %d\n", g.client.explore400Cnt)
+	fmt.Printf("Single cell explores: %d\n", g.gameStats.SingleCellExplores)
+	fmt.Printf("Single cell explores with treasures: %d\n", g.gameStats.SingleCellExploresWithTreasures)
 
-	log.Printf("DIG 500: %d\n", g.client.dig500Cnt)
-	log.Printf("DIG 400: %d\n", g.client.dig400Cnt)
+	fmt.Printf("Digs done: %d\n", g.gameStats.DigsDone)
 
-	log.Printf("CASH 500: %d\n", g.client.cash500Cnt)
-	log.Printf("CASH 400: %d\n", g.client.cash400Cnt)
+	fmt.Printf("Treasures found: %d\n", g.gameStats.TreasuresFound)
+	fmt.Printf("Treasures exchanged: %d\n", g.gameStats.TreasuresExchanged)
+	fmt.Printf("Treasures not exchanged: %d\n", g.gameStats.TreasuresNotExchanged)
+}
+
+func (g *GamePool) printHttpStats() {
+	fmt.Println("*** HTTP STATS ***")
+
+	fmt.Printf("Requests count: %d\n", g.client.countReq)
+
+	fmt.Printf("Licenses 500: %d\n", g.client.licenses500Cnt)
+	fmt.Printf("Licenses 400: %d\n", g.client.licenses400Cnt)
+
+	fmt.Printf("Explores 500: %d\n", g.client.explore500Cnt)
+	fmt.Printf("Explores 400: %d\n", g.client.explore400Cnt)
+
+	fmt.Printf("Digs 500: %d\n", g.client.dig500Cnt)
+	fmt.Printf("Digs 400: %d\n", g.client.dig400Cnt)
+
+	fmt.Printf("Cashes 500: %d\n", g.client.cash500Cnt)
+	fmt.Printf("Cashes 400: %d\n", g.client.cash400Cnt)
 }
 
 func (g *GamePool) waitBackend() error {
