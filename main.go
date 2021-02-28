@@ -22,7 +22,7 @@ func main() {
 	port = "8000"
 
 	httpClient := client.NewClient(address, port)
-	game := client.NewGameWOExplore(httpClient)
+	game := client.NewGamePool(httpClient)
 
 	if err := game.Run(); err != nil {
 		log.Printf("ERROR: %s\n", err)
