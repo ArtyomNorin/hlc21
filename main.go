@@ -16,8 +16,6 @@ func main() {
 	}
 
 	log.Printf("CPUs: %d\n", runtime.NumCPU())
-	log.Printf("ADDRESS: %s\n", address)
-	log.Printf("Port: %s\n", port)
 
 	port = "8000"
 

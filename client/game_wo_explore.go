@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// GameWOExplore без фазы explore
+// GameWOExplore без фазы exploreChunk
 type GameWOExplore struct {
 	countThreads int
 	client       *Client

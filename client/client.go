@@ -37,6 +37,7 @@ type Client struct {
 	dig400Cnt      uint64
 	explore500Cnt  uint64
 	explore400Cnt  uint64
+	explore200Cnt  uint64
 }
 
 func NewClient(address, port string) *Client {
@@ -122,7 +123,7 @@ Loop:
 			break Loop
 		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
 			atomic.AddUint64(&c.licenses500Cnt, 1)
-			log.Println(fmt.Sprintf("post /licenses 5** error: %d: %s", response.StatusCode(), string(response.Body())))
+			//log.Println(fmt.Sprintf("post /licenses 5** error: %d: %s", response.StatusCode(), string(response.Body())))
 		case fasthttp.StatusTooManyRequests, fasthttp.StatusConflict:
 			atomic.AddUint64(&c.licenses400Cnt, 1)
 			log.Println(fmt.Sprintf("post /licenses 4** error: %d: %s", response.StatusCode(), string(response.Body())))
@@ -173,6 +174,7 @@ Loop:
 				exploreErr = errors.New("marshal exploreAreaOut error: " + err.Error())
 			}
 
+			atomic.AddUint64(&c.explore200Cnt, 1)
 			break Loop
 		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
 			atomic.AddUint64(&c.explore500Cnt, 1)
