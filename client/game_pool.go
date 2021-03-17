@@ -29,6 +29,7 @@ type GamePool struct {
 	areasQueue     chan ExploreAreaOut
 	coinsQueue     chan Coin
 	treasuresQueue chan Treasure
+	licenses       chan SyncLicense
 }
 
 func NewGamePool(client *Client) *GamePool {
@@ -38,10 +39,38 @@ func NewGamePool(client *Client) *GamePool {
 		areasQueue:     make(chan ExploreAreaOut, 30),
 		coinsQueue:     make(chan Coin, 600),
 		treasuresQueue: make(chan Treasure, 30),
+		licenses:       make(chan SyncLicense, 100),
 	}
 }
 
-func (g *GamePool) explore(yStart, yEnd, chunkSize int) error {
+func (g *GamePool) issueLicense() error {
+	var license License
+	var err error
+
+	for {
+		if len(g.coinsQueue) != 0 {
+			license, err = g.client.PostLicenses(<-g.coinsQueue)
+			atomic.AddUint64(&g.gameStats.PaidLicenses, 1)
+		} else {
+			license, err = g.client.PostLicenses(0)
+			atomic.AddUint64(&g.gameStats.FreeLicenses, 1)
+		}
+
+		if err != nil {
+			return err
+		}
+
+		syncLicense := NewSyncLicense(license)
+
+		for i := 0; i < license.DigAllowed; i++ {
+			g.licenses <- syncLicense
+		}
+
+		syncLicense.WaitLicenseEnd()
+	}
+}
+
+func (g *GamePool) sequenceExplore(yStart, yEnd, chunkSize int) error {
 	for y := yStart; y < yEnd; y++ {
 		for x := 0; x < 3500-chunkSize; x += chunkSize {
 			area, err := g.client.PostExplore(x, y, chunkSize, 1)
@@ -75,6 +104,25 @@ func (g *GamePool) explore(yStart, yEnd, chunkSize int) error {
 
 				g.areasQueue <- column
 				extractedAreaTreasures++
+			}
+		}
+	}
+
+	return nil
+}
+
+func (g *GamePool) binExplore(yStart, yEnd, chunkSize int) error {
+	for y := yStart; y < yEnd; y++ {
+		for x := 0; x < 3500-chunkSize; x += chunkSize {
+			area, err := g.client.PostExplore(x, y, chunkSize, 1)
+			if err != nil {
+				return err
+			}
+
+			if area.Amount >= 1 {
+				if err := g.binExploreRow(area); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -166,32 +214,17 @@ func (g *GamePool) cash() error {
 }
 
 func (g *GamePool) dig() error {
-	license := License{}
-	var lErr error
-
 	for column := range g.areasQueue {
 		columnDepth := 1
 		columnTreasures := 0
 		for columnTreasures < column.Amount {
-			if license.IsEnd() {
-				if len(g.coinsQueue) != 0 {
-					license, lErr = g.client.PostLicenses(<-g.coinsQueue)
-					atomic.AddUint64(&g.gameStats.PaidLicenses, 1)
-				} else {
-					license, lErr = g.client.PostLicenses(0)
-					atomic.AddUint64(&g.gameStats.FreeLicenses, 1)
-				}
+			syncLicense := <-g.licenses
 
-				if lErr != nil {
-					return lErr
-				}
-			}
-
-			treasures, err := g.client.PostDig(license.ID, column.Area.PosX, column.Area.PosY, columnDepth)
+			treasures, err := g.client.PostDig(syncLicense.License.ID, column.Area.PosX, column.Area.PosY, columnDepth)
 			if err != nil {
 				if errors.Is(err, NoTreasureErr) {
 					columnDepth++
-					license.DigUsed++
+					syncLicense.DecreaseDig()
 					atomic.AddUint64(&g.gameStats.DigsDone, 1)
 					continue
 				}
@@ -201,15 +234,17 @@ func (g *GamePool) dig() error {
 
 			atomic.AddUint64(&g.gameStats.DigsDone, 1)
 
-			for _, treasure := range treasures {
-				g.treasuresQueue <- treasure
+			if columnDepth >= 3 {
+				for _, treasure := range treasures {
+					g.treasuresQueue <- treasure
+				}
+
+				atomic.AddUint64(&g.gameStats.TreasuresFound, uint64(len(treasures)))
 			}
 
 			columnTreasures += len(treasures)
 			columnDepth++
-			license.DigUsed++
-
-			atomic.AddUint64(&g.gameStats.TreasuresFound, uint64(len(treasures)))
+			syncLicense.DecreaseDig()
 		}
 	}
 
@@ -269,14 +304,20 @@ func (g *GamePool) Run() error {
 	fmt.Println("REQ PER SINGE CELL TREASURE:", float64(g.client.countReq)/float64(g.gameStats.SingleCellExploresWithTreasures))
 	return nil*/
 
-	countExplorers := 6
-	countDiggers := 10
-	countCashiers := 8
+	binExplore := false
+	exploreType := "SequenceExplore"
+	countExplorers := 7
+	countDiggers := 8
+	countCashiers := 6
 	exploreChunk := 3
 
+	if binExplore {
+		exploreType = "BinExplore"
+	}
+
 	fmt.Printf(
-		"GamePool. SequenceExplore %dx1. %d explorers. %d diggers. %d cashiers. Rps limit 1000.\n",
-		exploreChunk, countExplorers, countDiggers, countCashiers,
+		"%s %dx1. %d explorers. %d diggers. %d cashiers. Rps limit 1000.\n",
+		exploreType, exploreChunk, countExplorers, countDiggers, countCashiers,
 	)
 	if err := g.waitBackend(); err != nil {
 		return err
@@ -295,6 +336,15 @@ func (g *GamePool) Run() error {
 		}
 	}()
 
+	// *** LICENSE ***
+	for i := 0; i < 10; i++ {
+		go func() {
+			if err := g.issueLicense(); err != nil {
+				log.Fatalln(err)
+			}
+		}()
+	}
+
 	wg := new(sync.WaitGroup)
 
 	// *** EXPLORE ***
@@ -303,8 +353,14 @@ func (g *GamePool) Run() error {
 	for y := 0; y <= 3500-yChunkSize; y += yChunkSize {
 		wg.Add(1)
 		go func(yStart, yEnd int) {
-			if err := g.explore(yStart, yEnd, exploreChunk); err != nil {
-				log.Fatalln(err)
+			if binExplore {
+				if err := g.binExplore(yStart, yEnd, exploreChunk); err != nil {
+					log.Fatalln(err)
+				}
+			} else {
+				if err := g.sequenceExplore(yStart, yEnd, exploreChunk); err != nil {
+					log.Fatalln(err)
+				}
 			}
 
 			wg.Done()

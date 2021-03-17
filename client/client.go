@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-var NoMoreActiveLicensesAllowedErr = errors.New("no more active licenses allowed")
-var TooManyRequestsErr = errors.New("too many requests")
-var InternalServerErr = errors.New("internal server err")
 var NoTreasureErr = errors.New("no treasure")
 
 type BadRequestError struct {
@@ -117,7 +114,7 @@ Loop:
 		switch response.StatusCode() {
 		case fasthttp.StatusOK:
 			if err := json.Unmarshal(response.Body(), &license); err != nil {
-				licenseErr = errors.New("unmarshal license error: " + err.Error())
+				licenseErr = errors.New("unmarshal License error: " + err.Error())
 			}
 
 			break Loop
