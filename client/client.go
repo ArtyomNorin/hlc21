@@ -43,7 +43,7 @@ func NewClient(address, port string) *Client {
 		Addr: address + ":" + port,
 	}
 
-	client.limiter = rate.NewLimiter(rate.Every(time.Millisecond), 1)
+	client.limiter = rate.NewLimiter(rate.Every(960 * time.Microsecond), 1)
 
 	return client
 }

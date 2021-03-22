@@ -16,8 +16,6 @@ const SequenceExploreType = "SequenceExplore"
 const RandomSequenceExploreType = "RandomSequenceExplore"
 const RandomBinExploreType = "RandomBinExplore"
 
-var lineCosts = map[int]float64{30: 2.05, 28: 2.05, 15: 1.53, 8: 1.54, 7: 1.04, 4: 1.03, 3: 1.02, 2: 1.02, 1: 1}
-
 type GameStats struct {
 	FreeLicenses                    uint64
 	PaidLicenses                    uint64
@@ -27,7 +25,7 @@ type GameStats struct {
 	TreasuresFound                  uint64
 	TreasuresExchanged              uint64
 	TreasuresNotExchanged           uint64
-	//LineCost                        float64
+	LineCost                        int
 }
 
 // GamePool с пулами потоков
@@ -44,10 +42,29 @@ func NewGamePool(client *Client) *GamePool {
 	return &GamePool{
 		gameStats:      GameStats{},
 		client:         client,
-		areasQueue:     make(chan ExploreAreaOut, 30),
+		areasQueue:     make(chan ExploreAreaOut, 30000),
 		coinsQueue:     make(chan Coin, 600),
 		treasuresQueue: make(chan Treasure, 30),
 		licenses:       make(chan SyncLicense, 100),
+	}
+}
+
+func (g *GamePool) getExploreCost(areaSize int) int {
+	switch {
+	case areaSize < 4:
+		return 1
+	case areaSize < 8:
+		return 2
+	case areaSize < 16:
+		return 3
+	case areaSize < 32:
+		return 4
+	case areaSize < 64:
+		return 5
+	case areaSize < 128:
+		return 6
+	default:
+		return 7
 	}
 }
 
@@ -78,18 +95,30 @@ func (g *GamePool) issueLicense() error {
 	}
 }
 
-func (g *GamePool) sequenceExploreBySingleCell(xStart, xEnd, y, topAreaAmount int) error {
+func (g *GamePool) sequenceExploreBySingleCell(area ExploreAreaOut) error {
 	extractedAreaTreasures := 0
 
-	for x := xStart; x < xEnd; x++ {
-		if extractedAreaTreasures == topAreaAmount {
+	for x := area.Area.PosX; x < area.Area.PosX+area.Area.SizeX; x++ {
+		if extractedAreaTreasures == area.Amount {
+			return nil
+		} else if x+1 == area.Area.PosX+area.Area.SizeX {
+			lastArea := ExploreAreaOut{
+				Area:   ExploreAreaIn{PosX: x, PosY: area.Area.PosY, SizeX: 1, SizeY: area.Area.SizeY},
+				Amount: area.Amount - extractedAreaTreasures,
+			}
+
+			atomic.AddUint64(&g.gameStats.SingleCellExploresWithTreasures, 1)
+
+			g.areasQueue <- lastArea
 			return nil
 		}
 
-		column, err := g.client.PostExplore(x, y, 1, 1)
+		column, err := g.client.PostExplore(x, area.Area.PosY, 1, 1)
 		if err != nil {
 			return err
 		}
+
+		g.gameStats.LineCost += g.getExploreCost(1)
 
 		atomic.AddUint64(&g.gameStats.SingleCellExplores, 1)
 
@@ -100,7 +129,7 @@ func (g *GamePool) sequenceExploreBySingleCell(xStart, xEnd, y, topAreaAmount in
 		atomic.AddUint64(&g.gameStats.SingleCellExploresWithTreasures, 1)
 
 		g.areasQueue <- column
-		extractedAreaTreasures++
+		extractedAreaTreasures += column.Amount
 	}
 
 	return nil
@@ -135,7 +164,7 @@ func (g *GamePool) randomBinExplore(yStart, yEnd, chunkSize, reqPerX int) error 
 	return nil
 }
 
-func (g *GamePool) randomSequenceExplore(yStart, yEnd, chunkSize, reqPerX int) error {
+func (g *GamePool) randomSequenceExplore(yStart, yEnd, chunkSize, reqPerX int, treasuresLimit uint64) error {
 	randomizer := rand.New(rand.NewSource(time.Now().UnixNano()))
 	randomAreaSize := 3500 / reqPerX
 
@@ -151,113 +180,139 @@ func (g *GamePool) randomSequenceExplore(yStart, yEnd, chunkSize, reqPerX int) e
 				return err
 			}
 
-			if area.Amount < 1 {
-				continue
-			}
-
-			extractedAreaTreasures := 0
-
-			for xArea := area.Area.PosX; xArea < area.Area.PosX+area.Area.SizeX; xArea += 3 {
-				if extractedAreaTreasures == area.Amount {
-					break
-				}
-
-				subArea, err := g.client.PostExplore(xArea, area.Area.PosY, 3, 1)
-				if err != nil {
-					return err
-				}
-
-				if subArea.Amount < 1 {
-					continue
-				}
-
-				if err := g.sequenceExploreBySingleCell(
-					subArea.Area.PosX, subArea.Area.PosX+subArea.Area.SizeX, subArea.Area.PosY, subArea.Amount,
-				); err != nil {
-					return err
-				}
-
-				extractedAreaTreasures += subArea.Amount
-			}
-		}
-	}
-
-	return nil
-}
-
-func (g *GamePool) sequenceExplore(yStart, yEnd, chunkSize int) error {
-	for y := yStart; y < yEnd; y++ {
-		for x := 0; x < 3500-chunkSize; x += chunkSize {
-			area, err := g.client.PostExplore(x, y, chunkSize, 1)
-			if err != nil {
-				return err
-			}
+			//g.gameStats.LineCost += g.getExploreCost(chunkSize)
 
 			if area.Amount < 1 {
 				continue
 			}
 
-			extractedAreaTreasures := 0
-
-			for xArea := area.Area.PosX; xArea < area.Area.PosX+area.Area.SizeX; xArea += 3 {
-				if extractedAreaTreasures == area.Amount {
-					break
-				}
-
-				subArea, err := g.client.PostExplore(xArea, area.Area.PosY, 3, 1)
-				if err != nil {
-					return err
-				}
-
-				if subArea.Amount < 1 {
-					continue
-				}
-
-				if err := g.sequenceExploreBySingleCell(
-					subArea.Area.PosX, subArea.Area.PosX+subArea.Area.SizeX, subArea.Area.PosY, subArea.Amount,
-				); err != nil {
-					return err
-				}
-
-				extractedAreaTreasures += subArea.Amount
-			}
-		}
-	}
-
-	return nil
-}
-
-func (g *GamePool) binExplore(yStart, yEnd, chunkSize int) error {
-	for y := yStart; y < yEnd; y++ {
-		for x := 0; x < 3500-chunkSize; x += chunkSize {
-			area, err := g.client.PostExplore(x, y, chunkSize, 1)
-			if err != nil {
+			if err := g.sequenceExploreRow(area, 3); err != nil {
 				return err
 			}
 
-			//g.gameStats.LineCost += lineCosts[chunkSize]
-
-			if area.Amount >= 1 {
-				if err := g.binExploreRow(area); err != nil {
-					return err
-				}
+			if g.gameStats.SingleCellExploresWithTreasures >= treasuresLimit {
+				return nil
 			}
 		}
 
-		/*log.Println(g.gameStats.LineCost)
+		/*fmt.Println(g.gameStats.SingleCellExploresWithTreasures, g.gameStats.LineCost, float64(g.gameStats.LineCost)/float64(g.gameStats.SingleCellExploresWithTreasures))
+
+		g.gameStats.SingleCellExploresWithTreasures = 0
 		g.gameStats.LineCost = 0*/
 	}
 
 	return nil
 }
 
+func (g *GamePool) sequenceExploreRow(area ExploreAreaOut, chunkSize int) error {
+	extractedAreaTreasures := 0
+
+	for xArea := area.Area.PosX; xArea < area.Area.PosX+area.Area.SizeX; xArea += chunkSize {
+		if extractedAreaTreasures == area.Amount {
+			return nil
+		} else if xArea+chunkSize == area.Area.PosX+area.Area.SizeX {
+			lastArea := ExploreAreaOut{
+				Area:   ExploreAreaIn{PosX: xArea, PosY: area.Area.PosY, SizeX: chunkSize, SizeY: area.Area.SizeY},
+				Amount: area.Amount - extractedAreaTreasures,
+			}
+
+			return g.sequenceExploreBySingleCell(lastArea)
+		}
+
+		subArea, err := g.client.PostExplore(xArea, area.Area.PosY, chunkSize, 1)
+		if err != nil {
+			return err
+		}
+
+		g.gameStats.LineCost += g.getExploreCost(chunkSize)
+
+		if subArea.Amount < 1 {
+			continue
+		}
+
+		if err := g.sequenceExploreBySingleCell(subArea); err != nil {
+			return err
+		}
+
+		extractedAreaTreasures += subArea.Amount
+	}
+
+	return nil
+}
+
+func (g *GamePool) sequenceExplore(yStart, yEnd, chunkSize int, treasuresLimit uint64) error {
+	for y := yStart; y < yEnd; y++ {
+		for x := 0; x < 3500-chunkSize; x += chunkSize {
+			area, err := g.client.PostExplore(x, y, chunkSize, 1)
+			if err != nil {
+				return err
+			}
+
+			g.gameStats.LineCost += g.getExploreCost(chunkSize)
+
+			if area.Amount < 1 {
+				continue
+			}
+
+			if err := g.sequenceExploreRow(area, 3); err != nil {
+				return err
+			}
+
+			if g.gameStats.SingleCellExploresWithTreasures >= treasuresLimit {
+				return nil
+			}
+		}
+
+		fmt.Println(g.gameStats.SingleCellExploresWithTreasures, g.gameStats.LineCost, float64(g.gameStats.LineCost)/float64(g.gameStats.SingleCellExploresWithTreasures))
+
+		g.gameStats.SingleCellExploresWithTreasures = 0
+		g.gameStats.LineCost = 0
+	}
+
+	return nil
+}
+
+func (g *GamePool) binExplore(yStart, yEnd, chunkSize int, treasuresLimit uint64) error {
+	for y := yStart; y < yEnd; y++ {
+		for x := 0; x < 3500-chunkSize; x += chunkSize {
+			area, err := g.client.PostExplore(x, y, chunkSize, 1)
+			if err != nil {
+				return err
+			}
+
+			g.gameStats.LineCost += g.getExploreCost(chunkSize)
+
+			if area.Amount >= 1 {
+				if err := g.binExploreRow(area); err != nil {
+					return err
+				}
+			}
+
+			if g.gameStats.SingleCellExploresWithTreasures >= treasuresLimit {
+				return nil
+			}
+		}
+
+		fmt.Println(g.gameStats.SingleCellExploresWithTreasures, g.gameStats.LineCost, float64(g.gameStats.LineCost)/float64(g.gameStats.SingleCellExploresWithTreasures))
+
+		g.gameStats.SingleCellExploresWithTreasures = 0
+		g.gameStats.LineCost = 0
+	}
+
+	return nil
+}
+
 func (g *GamePool) binExploreRow(area ExploreAreaOut) error {
+	if area.Amount == 0 {
+		return nil
+	}
+
 	leftArea, err := g.client.PostExplore(area.Area.PosX, area.Area.PosY, area.Area.SizeX/2, area.Area.SizeY)
 	if err != nil {
 		return err
 	}
 
-	//g.gameStats.LineCost += lineCosts[area.Area.SizeX/2]
+	g.gameStats.LineCost += g.getExploreCost(area.Area.SizeX / 2)
 
 	// если ячейка не 1x1
 	if leftArea.Area.SizeX != 1 {
@@ -271,10 +326,7 @@ func (g *GamePool) binExploreRow(area ExploreAreaOut) error {
 			rightArea := leftArea
 			rightArea.Area.PosX += leftArea.Area.SizeX
 			rightArea.Amount = area.Amount
-
-			if area.Area.SizeX%2 != 0 {
-				rightArea.Area.SizeX = area.Area.SizeX - leftArea.Area.SizeX
-			}
+			rightArea.Area.SizeX = area.Area.SizeX - leftArea.Area.SizeX
 
 			return g.binExploreRow(rightArea)
 		}
@@ -287,26 +339,25 @@ func (g *GamePool) binExploreRow(area ExploreAreaOut) error {
 		rightArea := leftArea
 		rightArea.Area.PosX += leftArea.Area.SizeX
 		rightArea.Amount = area.Amount - leftArea.Amount
-
-		if area.Area.SizeX%2 != 0 {
-			rightArea.Area.SizeX = area.Area.SizeX - leftArea.Area.SizeX
-		}
+		rightArea.Area.SizeX = area.Area.SizeX - leftArea.Area.SizeX
 
 		return g.binExploreRow(rightArea)
 	}
+
+	atomic.AddUint64(&g.gameStats.SingleCellExplores, 1)
 
 	// если ячейка 1x1
 
 	// если все сокровища в левой ячейке, то сохраняем ячейку
 	if leftArea.Amount == area.Amount {
-		//g.areasQueue <- leftArea
+		g.areasQueue <- leftArea
 		atomic.AddUint64(&g.gameStats.SingleCellExploresWithTreasures, 1)
 		return nil
 	}
 
 	// если в левой ячейке есть сокровище, то сохраняем её
 	if leftArea.Amount > 0 {
-		//g.areasQueue <- leftArea
+		g.areasQueue <- leftArea
 		atomic.AddUint64(&g.gameStats.SingleCellExploresWithTreasures, 1)
 	}
 
@@ -323,7 +374,7 @@ func (g *GamePool) binExploreRow(area ExploreAreaOut) error {
 	rightArea.Area.PosX += leftArea.Area.SizeX
 	rightArea.Amount = area.Amount - leftArea.Amount
 
-	//g.areasQueue <- rightArea
+	g.areasQueue <- rightArea
 	atomic.AddUint64(&g.gameStats.SingleCellExploresWithTreasures, 1)
 
 	return nil
@@ -377,16 +428,34 @@ func (g *GamePool) dig() error {
 				for _, treasure := range treasures {
 					g.treasuresQueue <- treasure
 				}
-
-				atomic.AddUint64(&g.gameStats.TreasuresFound, uint64(len(treasures)))
 			}
 
 			columnTreasures += len(treasures)
 			columnDepth++
 			syncLicense.DecreaseDig()
+
+			atomic.AddUint64(&g.gameStats.TreasuresFound, uint64(len(treasures)))
 		}
 	}
 
+	return nil
+}
+
+func (g *GamePool) printArea(area ExploreAreaOut) error {
+	for x := area.Area.PosX; x < area.Area.PosX+area.Area.SizeX; x++ {
+		cell, err := g.client.PostExplore(x, area.Area.PosY, 1, 1)
+		if err != nil {
+			return err
+		}
+
+		if cell.Amount == 0 {
+			fmt.Print(0, " ")
+		} else {
+			fmt.Print(cell.Amount, " ")
+		}
+	}
+
+	fmt.Println()
 	return nil
 }
 
@@ -465,12 +534,17 @@ func (g *GamePool) Run() error {
 
 	/*amounts := make([]int, 0)
 
-	chunk := 60
+	chunk := 30
 
 	for x := 0; x < 3500-chunk; x += chunk {
 		area, err := g.client.PostExplore(x, 0, chunk, 1)
 		if err != nil {
 			return err
+		}
+
+		if area.Amount != 0 {
+			fmt.Println(area)
+			g.printArea(area)
 		}
 
 		amounts = append(amounts, area.Amount)
@@ -515,15 +589,16 @@ func (g *GamePool) Run() error {
 	fmt.Println("REQ PER SINGE CELL TREASURE:", float64(g.client.countReq)/float64(g.gameStats.SingleCellExploresWithTreasures))
 	return nil*/
 
-	exploreType := SequenceExploreType
+	exploreType := RandomSequenceExploreType
 	countExplorers := 9
 	countDiggers := 10
 	countCashiers := 8
 	exploreChunk := 30
+	treasuresLimit := 31000
 
 	fmt.Printf(
-		"%s %dx1. %d explorers. %d diggers. %d cashiers. Rps limit 1000.\n",
-		exploreType, exploreChunk, countExplorers, countDiggers, countCashiers,
+		"%s %dx1. %d explorers. %d diggers. %d cashiers. %d treasures limit. Rps limit 1000.\n",
+		exploreType, exploreChunk, countExplorers, countDiggers, countCashiers, treasuresLimit,
 	)
 	if err := g.waitBackend(); err != nil {
 		return err
@@ -554,6 +629,18 @@ func (g *GamePool) Run() error {
 	wg := new(sync.WaitGroup)
 
 	// *** EXPLORE ***
+	exploreStartTime := time.Now()
+	exploresDoneChan := make(chan struct{}, countExplorers)
+
+	go func() {
+		for i := 0; i < countExplorers; i++ {
+			<-exploresDoneChan
+		}
+
+		log.Printf("Explore finish: %f\n", time.Since(exploreStartTime).Seconds())
+		close(g.areasQueue)
+	}()
+
 	yChunkSize := 3500 / countExplorers
 
 	for y := 0; y <= 3500-yChunkSize; y += yChunkSize {
@@ -561,15 +648,15 @@ func (g *GamePool) Run() error {
 		go func(yStart, yEnd int) {
 			switch exploreType {
 			case SequenceExploreType:
-				if err := g.sequenceExplore(yStart, yEnd, exploreChunk); err != nil {
+				if err := g.sequenceExplore(yStart, yEnd, exploreChunk, uint64(treasuresLimit)); err != nil {
 					log.Fatalln(err)
 				}
 			case BinExploreType:
-				if err := g.binExplore(yStart, yEnd, exploreChunk); err != nil {
+				if err := g.binExplore(yStart, yEnd, exploreChunk, uint64(treasuresLimit)); err != nil {
 					log.Fatalln(err)
 				}
 			case RandomSequenceExploreType:
-				if err := g.randomSequenceExplore(yStart, yEnd, exploreChunk, 140); err != nil {
+				if err := g.randomSequenceExplore(yStart, yEnd, exploreChunk, 100, uint64(treasuresLimit)); err != nil {
 					log.Fatalln(err)
 				}
 			case RandomBinExploreType:
@@ -579,10 +666,24 @@ func (g *GamePool) Run() error {
 			}
 
 			wg.Done()
+
+			exploresDoneChan <- struct{}{}
 		}(y, y+yChunkSize)
 	}
 
 	// *** DIG ***
+	digStartTime := time.Now()
+	digDoneChan := make(chan struct{}, countDiggers)
+
+	go func() {
+		for i := 0; i < countDiggers; i++ {
+			<-digDoneChan
+		}
+
+		log.Printf("Dig finish: %f\n", time.Since(digStartTime).Seconds())
+		close(g.treasuresQueue)
+	}()
+
 	for i := 0; i < countDiggers; i++ {
 		wg.Add(1)
 		go func() {
@@ -591,10 +692,22 @@ func (g *GamePool) Run() error {
 			}
 
 			wg.Done()
+			digDoneChan <- struct{}{}
 		}()
 	}
 
 	// *** CASH ***
+	cashStartTime := time.Now()
+	cashDoneChan := make(chan struct{}, countCashiers)
+
+	go func() {
+		for i := 0; i < countCashiers; i++ {
+			<-cashDoneChan
+		}
+
+		log.Printf("Cash finish: %f\n", time.Since(cashStartTime).Seconds())
+	}()
+
 	for i := 0; i < countCashiers; i++ {
 		wg.Add(1)
 		go func() {
@@ -602,6 +715,7 @@ func (g *GamePool) Run() error {
 				log.Fatalln(err)
 			}
 			wg.Done()
+			cashDoneChan <- struct{}{}
 		}()
 	}
 
