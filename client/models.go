@@ -12,6 +12,18 @@ type ExploreAreaOut struct {
 	Amount int           `json:"amount"` // кол-во сокровищ в области
 }
 
+func (area ExploreAreaOut) GetRightArea(leftArea ExploreAreaOut) ExploreAreaOut {
+	return ExploreAreaOut{
+		Area: ExploreAreaIn{
+			PosX:  area.Area.PosX + leftArea.Area.SizeX,
+			PosY:  area.Area.PosY,
+			SizeX: area.Area.SizeX - leftArea.Area.SizeX,
+			SizeY: area.Area.SizeY,
+		},
+		Amount: area.Amount - leftArea.Amount,
+	}
+}
+
 type License struct {
 	ID         int `json:"id"`
 	DigAllowed int `json:"digAllowed"`
@@ -50,6 +62,12 @@ func (sl SyncLicense) WaitLicenseEnd() {
 }
 
 type Treasure string
+
+type PriorityTreasure struct {
+	Treasure Treasure
+	Priority int
+	Index    int
+}
 
 type DigIn struct {
 	LicenseID int `json:"licenseID"`

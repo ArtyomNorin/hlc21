@@ -16,21 +16,9 @@ const SequenceExploreType = "SequenceExplore"
 const RandomSequenceExploreType = "RandomSequenceExplore"
 const RandomBinExploreType = "RandomBinExplore"
 
-type GameStats struct {
-	FreeLicenses                    uint64
-	PaidLicenses                    uint64
-	SingleCellExplores              uint64
-	SingleCellExploresWithTreasures uint64
-	DigsDone                        uint64
-	TreasuresFound                  uint64
-	TreasuresExchanged              uint64
-	TreasuresNotExchanged           uint64
-	LineCost                        int
-}
-
 // GamePool с пулами потоков
 type GamePool struct {
-	gameStats      GameStats
+	gameStats      *GameStats
 	client         *Client
 	areasQueue     chan ExploreAreaOut
 	coinsQueue     chan Coin
@@ -40,31 +28,17 @@ type GamePool struct {
 
 func NewGamePool(client *Client) *GamePool {
 	return &GamePool{
-		gameStats:      GameStats{},
+		gameStats: &GameStats{
+			exploreCostLock: new(sync.Mutex),
+			digCostLock:     new(sync.Mutex),
+			cashCostLock:    new(sync.Mutex),
+			licenseWaitLock: new(sync.Mutex),
+		},
 		client:         client,
-		areasQueue:     make(chan ExploreAreaOut, 30000),
+		areasQueue:     make(chan ExploreAreaOut, 9),
 		coinsQueue:     make(chan Coin, 600),
-		treasuresQueue: make(chan Treasure, 30),
+		treasuresQueue: make(chan Treasure, 10),
 		licenses:       make(chan SyncLicense, 100),
-	}
-}
-
-func (g *GamePool) getExploreCost(areaSize int) int {
-	switch {
-	case areaSize < 4:
-		return 1
-	case areaSize < 8:
-		return 2
-	case areaSize < 16:
-		return 3
-	case areaSize < 32:
-		return 4
-	case areaSize < 64:
-		return 5
-	case areaSize < 128:
-		return 6
-	default:
-		return 7
 	}
 }
 
@@ -74,10 +48,10 @@ func (g *GamePool) issueLicense() error {
 
 	for {
 		if len(g.coinsQueue) != 0 {
-			license, err = g.client.PostLicenses(<-g.coinsQueue)
+			license, err = g.client.PostLicenses([]Coin{<-g.coinsQueue})
 			atomic.AddUint64(&g.gameStats.PaidLicenses, 1)
 		} else {
-			license, err = g.client.PostLicenses(0)
+			license, err = g.client.PostLicenses(nil)
 			atomic.AddUint64(&g.gameStats.FreeLicenses, 1)
 		}
 
@@ -118,7 +92,7 @@ func (g *GamePool) sequenceExploreBySingleCell(area ExploreAreaOut) error {
 			return err
 		}
 
-		g.gameStats.LineCost += g.getExploreCost(1)
+		g.gameStats.writeExploreCost(1)
 
 		atomic.AddUint64(&g.gameStats.SingleCellExplores, 1)
 
@@ -151,6 +125,8 @@ func (g *GamePool) randomBinExplore(yStart, yEnd, chunkSize, reqPerX int) error 
 				return err
 			}
 
+			g.gameStats.writeExploreCost(chunkSize)
+
 			if area.Amount < 1 {
 				continue
 			}
@@ -180,7 +156,7 @@ func (g *GamePool) randomSequenceExplore(yStart, yEnd, chunkSize, reqPerX int, t
 				return err
 			}
 
-			//g.gameStats.LineCost += g.getExploreCost(chunkSize)
+			g.gameStats.writeExploreCost(chunkSize)
 
 			if area.Amount < 1 {
 				continue
@@ -194,11 +170,6 @@ func (g *GamePool) randomSequenceExplore(yStart, yEnd, chunkSize, reqPerX int, t
 				return nil
 			}
 		}
-
-		/*fmt.Println(g.gameStats.SingleCellExploresWithTreasures, g.gameStats.LineCost, float64(g.gameStats.LineCost)/float64(g.gameStats.SingleCellExploresWithTreasures))
-
-		g.gameStats.SingleCellExploresWithTreasures = 0
-		g.gameStats.LineCost = 0*/
 	}
 
 	return nil
@@ -224,7 +195,7 @@ func (g *GamePool) sequenceExploreRow(area ExploreAreaOut, chunkSize int) error 
 			return err
 		}
 
-		g.gameStats.LineCost += g.getExploreCost(chunkSize)
+		g.gameStats.writeExploreCost(chunkSize)
 
 		if subArea.Amount < 1 {
 			continue
@@ -248,7 +219,7 @@ func (g *GamePool) sequenceExplore(yStart, yEnd, chunkSize int, treasuresLimit u
 				return err
 			}
 
-			g.gameStats.LineCost += g.getExploreCost(chunkSize)
+			g.gameStats.writeExploreCost(chunkSize)
 
 			if area.Amount < 1 {
 				continue
@@ -262,11 +233,6 @@ func (g *GamePool) sequenceExplore(yStart, yEnd, chunkSize int, treasuresLimit u
 				return nil
 			}
 		}
-
-		fmt.Println(g.gameStats.SingleCellExploresWithTreasures, g.gameStats.LineCost, float64(g.gameStats.LineCost)/float64(g.gameStats.SingleCellExploresWithTreasures))
-
-		g.gameStats.SingleCellExploresWithTreasures = 0
-		g.gameStats.LineCost = 0
 	}
 
 	return nil
@@ -280,7 +246,7 @@ func (g *GamePool) binExplore(yStart, yEnd, chunkSize int, treasuresLimit uint64
 				return err
 			}
 
-			g.gameStats.LineCost += g.getExploreCost(chunkSize)
+			g.gameStats.writeExploreCost(chunkSize)
 
 			if area.Amount >= 1 {
 				if err := g.binExploreRow(area); err != nil {
@@ -293,10 +259,6 @@ func (g *GamePool) binExplore(yStart, yEnd, chunkSize int, treasuresLimit uint64
 			}
 		}
 
-		fmt.Println(g.gameStats.SingleCellExploresWithTreasures, g.gameStats.LineCost, float64(g.gameStats.LineCost)/float64(g.gameStats.SingleCellExploresWithTreasures))
-
-		g.gameStats.SingleCellExploresWithTreasures = 0
-		g.gameStats.LineCost = 0
 	}
 
 	return nil
@@ -312,7 +274,7 @@ func (g *GamePool) binExploreRow(area ExploreAreaOut) error {
 		return err
 	}
 
-	g.gameStats.LineCost += g.getExploreCost(area.Area.SizeX / 2)
+	g.gameStats.writeExploreCost(area.Area.SizeX / 2)
 
 	// если ячейка не 1x1
 	if leftArea.Area.SizeX != 1 {
@@ -387,8 +349,10 @@ func (g *GamePool) cash() error {
 			return err
 		}
 
+		g.gameStats.writeCashCost()
+
 		if coins == nil {
-			atomic.AddUint64(&g.gameStats.TreasuresNotExchanged, 1)
+			atomic.AddUint64(&g.gameStats.TreasuresExchangeFailed, 1)
 		} else {
 			atomic.AddUint64(&g.gameStats.TreasuresExchanged, 1)
 		}
@@ -408,23 +372,25 @@ func (g *GamePool) dig() error {
 		columnDepth := 1
 		columnTreasures := 0
 		for columnTreasures < column.Amount {
+			timeStart := time.Now()
 			syncLicense := <-g.licenses
+			g.gameStats.writeLicenseWait(time.Since(timeStart))
 
 			treasures, err := g.client.PostDig(syncLicense.License.ID, column.Area.PosX, column.Area.PosY, columnDepth)
 			if err != nil {
 				if errors.Is(err, NoTreasureErr) {
 					columnDepth++
 					syncLicense.DecreaseDig()
-					atomic.AddUint64(&g.gameStats.DigsDone, 1)
+					g.gameStats.writeDigCost(columnDepth)
 					continue
 				}
 
 				return err
 			}
 
-			atomic.AddUint64(&g.gameStats.DigsDone, 1)
+			g.gameStats.writeDigCost(columnDepth)
 
-			if columnDepth >= 3 {
+			if columnDepth > 2 {
 				for _, treasure := range treasures {
 					g.treasuresQueue <- treasure
 				}
@@ -534,17 +500,12 @@ func (g *GamePool) Run() error {
 
 	/*amounts := make([]int, 0)
 
-	chunk := 30
+	chunk := 60
 
 	for x := 0; x < 3500-chunk; x += chunk {
 		area, err := g.client.PostExplore(x, 0, chunk, 1)
 		if err != nil {
 			return err
-		}
-
-		if area.Amount != 0 {
-			fmt.Println(area)
-			g.printArea(area)
 		}
 
 		amounts = append(amounts, area.Amount)
@@ -589,12 +550,12 @@ func (g *GamePool) Run() error {
 	fmt.Println("REQ PER SINGE CELL TREASURE:", float64(g.client.countReq)/float64(g.gameStats.SingleCellExploresWithTreasures))
 	return nil*/
 
-	exploreType := RandomSequenceExploreType
-	countExplorers := 9
-	countDiggers := 10
-	countCashiers := 8
+	exploreType := SequenceExploreType
+	countExplorers := 10
+	countDiggers := 9
+	countCashiers := 10
 	exploreChunk := 30
-	treasuresLimit := 31000
+	treasuresLimit := 34000
 
 	fmt.Printf(
 		"%s %dx1. %d explorers. %d diggers. %d cashiers. %d treasures limit. Rps limit 1000.\n",
@@ -606,8 +567,9 @@ func (g *GamePool) Run() error {
 
 	go func() {
 		time.Sleep(time.Second * 598)
-		g.printGameStats()
-		g.printHttpStats()
+		g.gameStats.printStats()
+		fmt.Println("----------------------")
+		g.client.printStats()
 	}()
 
 	go func() {
@@ -721,8 +683,9 @@ func (g *GamePool) Run() error {
 
 	wg.Wait()
 
-	g.printGameStats()
-	g.printHttpStats()
+	g.gameStats.printStats()
+	fmt.Println("----------------------")
+	g.client.printStats()
 
 	return nil
 }
@@ -731,41 +694,6 @@ func (g *GamePool) printQueueStats() {
 	log.Printf("AREAS QUEUE: %d\n", len(g.areasQueue))
 	log.Printf("TREASURES QUEUE: %d\n", len(g.treasuresQueue))
 	log.Printf("COINS QUEUE: %d\n", len(g.coinsQueue))
-}
-
-func (g *GamePool) printGameStats() {
-	fmt.Println("*** GAME STATS ***")
-
-	fmt.Printf("Free licenses: %d\n", g.gameStats.FreeLicenses)
-	fmt.Printf("Paid licenses: %d\n", g.gameStats.PaidLicenses)
-
-	fmt.Printf("Single cell explores: %d\n", g.gameStats.SingleCellExplores)
-	fmt.Printf("Single cell explores with treasures: %d\n", g.gameStats.SingleCellExploresWithTreasures)
-
-	fmt.Printf("Digs done: %d\n", g.gameStats.DigsDone)
-
-	fmt.Printf("Treasures found: %d\n", g.gameStats.TreasuresFound)
-	fmt.Printf("Treasures exchanged: %d\n", g.gameStats.TreasuresExchanged)
-	fmt.Printf("Treasures not exchanged: %d\n", g.gameStats.TreasuresNotExchanged)
-}
-
-func (g *GamePool) printHttpStats() {
-	fmt.Println("*** HTTP STATS ***")
-
-	fmt.Printf("Requests count: %d\n", g.client.countReq)
-
-	fmt.Printf("Licenses 500: %d\n", g.client.licenses500Cnt)
-	fmt.Printf("Licenses 400: %d\n", g.client.licenses400Cnt)
-
-	fmt.Printf("Explores 200: %d\n", g.client.explore200Cnt)
-	fmt.Printf("Explores 500: %d\n", g.client.explore500Cnt)
-	fmt.Printf("Explores 400: %d\n", g.client.explore400Cnt)
-
-	fmt.Printf("Digs 500: %d\n", g.client.dig500Cnt)
-	fmt.Printf("Digs 400: %d\n", g.client.dig400Cnt)
-
-	fmt.Printf("Cashes 500: %d\n", g.client.cash500Cnt)
-	fmt.Printf("Cashes 400: %d\n", g.client.cash400Cnt)
 }
 
 func (g *GamePool) waitBackend() error {

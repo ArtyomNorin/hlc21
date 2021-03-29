@@ -9,6 +9,7 @@ import (
 	"golang.org/x/time/rate"
 	"log"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -26,10 +27,13 @@ type Client struct {
 	limiter    *rate.Limiter
 
 	countReq       uint64
+	cash200Cnt     uint64
 	cash500Cnt     uint64
 	cash400Cnt     uint64
+	licenses200Cnt uint64
 	licenses500Cnt uint64
 	licenses400Cnt uint64
+	dig200Cnt      uint64
 	dig500Cnt      uint64
 	dig400Cnt      uint64
 	explore500Cnt  uint64
@@ -43,7 +47,7 @@ func NewClient(address, port string) *Client {
 		Addr: address + ":" + port,
 	}
 
-	client.limiter = rate.NewLimiter(rate.Every(960 * time.Microsecond), 1)
+	client.limiter = rate.NewLimiter(rate.Every(960*time.Microsecond), 1)
 
 	return client
 }
@@ -84,7 +88,7 @@ func (c *Client) HealthCheck() (bool, error) {
 	return false, nil
 }
 
-func (c *Client) PostLicenses(coin Coin) (License, error) {
+func (c *Client) PostLicenses(coins []Coin) (License, error) {
 	request, response := fasthttp.AcquireRequest(), fasthttp.AcquireResponse()
 	defer func() {
 		fasthttp.ReleaseRequest(request)
@@ -96,9 +100,20 @@ func (c *Client) PostLicenses(coin Coin) (License, error) {
 	request.Header.SetContentType("application/json")
 	request.Header.SetHost("localhost")
 	request.AppendBodyString("[")
-	if coin != 0 {
-		request.AppendBodyString(strconv.Itoa(int(coin)))
+	if len(coins) != 0 {
+		if len(coins) == 1 {
+			request.AppendBodyString(strconv.Itoa(int(coins[0])))
+		} else {
+			coinsString := make([]string, 0, len(coins))
+
+			for _, coin := range coins {
+				coinsString = append(coinsString, strconv.Itoa(int(coin)))
+			}
+
+			request.AppendBodyString(strings.Join(coinsString, ","))
+		}
 	}
+
 	request.AppendBodyString("]")
 
 	license := License{}
@@ -117,6 +132,7 @@ Loop:
 				licenseErr = errors.New("unmarshal License error: " + err.Error())
 			}
 
+			atomic.AddUint64(&c.licenses200Cnt, 1)
 			break Loop
 		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
 			atomic.AddUint64(&c.licenses500Cnt, 1)
@@ -226,9 +242,11 @@ Loop:
 				digErr = errors.New("marshal Treasures error: " + err.Error())
 			}
 
+			atomic.AddUint64(&c.dig200Cnt, 1)
 			break Loop
 		case fasthttp.StatusNotFound:
 			digErr = NoTreasureErr
+			atomic.AddUint64(&c.dig200Cnt, 1)
 			break Loop
 		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
 			atomic.AddUint64(&c.dig500Cnt, 1)
@@ -276,6 +294,7 @@ Loop:
 				cashErr = errors.New("marshal Coins error: " + err.Error())
 			}
 
+			atomic.AddUint64(&c.cash200Cnt, 1)
 			break Loop
 		case fasthttp.StatusServiceUnavailable, fasthttp.StatusBadGateway, fasthttp.StatusGatewayTimeout:
 			atomic.AddUint64(&c.cash500Cnt, 1)
@@ -293,4 +312,24 @@ Loop:
 	}
 
 	return coins, cashErr
+}
+
+func (c *Client) printStats() {
+	fmt.Printf("Requests count: %d\n", c.countReq)
+
+	fmt.Printf("Licenses 200: %d\n", c.licenses200Cnt)
+	fmt.Printf("Licenses 500: %d\n", c.licenses500Cnt)
+	fmt.Printf("Licenses 400: %d\n", c.licenses400Cnt)
+
+	fmt.Printf("Explores 200: %d\n", c.explore200Cnt)
+	fmt.Printf("Explores 500: %d\n", c.explore500Cnt)
+	fmt.Printf("Explores 400: %d\n", c.explore400Cnt)
+
+	fmt.Printf("Digs 200: %d\n", c.dig200Cnt)
+	fmt.Printf("Digs 500: %d\n", c.dig500Cnt)
+	fmt.Printf("Digs 400: %d\n", c.dig400Cnt)
+
+	fmt.Printf("Cashes 200: %d\n", c.cash200Cnt)
+	fmt.Printf("Cashes 500: %d\n", c.cash500Cnt)
+	fmt.Printf("Cashes 400: %d\n", c.cash400Cnt)
 }

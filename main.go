@@ -4,7 +4,6 @@ import (
 	"hlc21/client"
 	"log"
 	"os"
-	"runtime"
 )
 
 func main() {
@@ -15,7 +14,7 @@ func main() {
 		port = os.Getenv("PORT")
 	}
 
-	log.Printf("CPUs: %d\n", runtime.NumCPU())
+	//log.Printf("CPUs: %d\n", runtime.NumCPU())
 
 	port = "8000"
 
